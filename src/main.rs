@@ -1,55 +1,25 @@
 use fastrand::Rng;
 use glam::Vec3A;
+use objects::{HitPoint, Object};
 use std::{
-    f32::{consts::PI, EPSILON, INFINITY},
+    f32::{consts::PI, INFINITY},
     fs::File,
     io::Write,
 };
-#[derive(Debug)]
-enum ReflT {
+
+use crate::objects::sphere::Sphere;
+mod objects;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ReflT {
     DIFF,
     SPEC,
     REFR,
 }
 #[derive(Debug)]
-struct Ray {
+pub struct Ray {
     pub o: Vec3A,
     pub d: Vec3A,
-}
-#[derive(Debug)]
-struct Sphere {
-    rad: f32,
-    p: Vec3A,
-    e: Vec3A,
-    c: Vec3A,
-    refl: ReflT,
-}
-
-impl Sphere {
-    pub fn new(rad: f32, p: Vec3A, e: Vec3A, c: Vec3A, refl: ReflT) -> Self {
-        Self { rad, p, e, c, refl }
-    }
-    pub fn intersect(&self, r: &Ray) -> Option<f32> {
-        let op = self.p - r.o;
-        let b = op.dot(r.d);
-        let mut det = b * b - op.dot(op) + self.rad * self.rad;
-        if det < 0. {
-            return None;
-        } else {
-            det = det.sqrt();
-        }
-        let t = b - det;
-        if t > EPSILON {
-            return Some(t);
-        } else {
-            let t = b + det;
-            if t > EPSILON {
-                return Some(t);
-            } else {
-                return None;
-            }
-        }
-    }
 }
 
 fn clamp(x: f32) -> f32 {
@@ -60,48 +30,41 @@ fn to_int(x: f32) -> i32 {
     return (clamp(x).powf(1. / 2.2) * 255. + 0.5) as i32;
 }
 
-fn intersect<'a>(r: &Ray, spheres: &'a Vec<Sphere>) -> Option<(&'a Sphere, f32)> {
+fn intersect(r: &Ray, spheres: &Vec<Box<dyn Object>>) -> Option<HitPoint> {
     let mut t = INFINITY;
-    let mut id = 0;
+    let mut h = None;
     for (i, sphere) in spheres.iter().enumerate() {
-        if let Some(d) = sphere.intersect(r) {
-            if d < 0.01 {
-                continue;
-            }
-            if d < t {
-                t = d;
-                id = i;
+        if let Some(hit) = sphere.intersect(r, 0.01, t) {
+            if hit.t < t {
+                t = hit.t;
+                h = Some(hit);
             }
         }
     }
-    if t < INFINITY {
-        return Some((&spheres[id], t));
-    } else {
-        return None;
-    }
+    return h;
 }
 
-fn radiance(r: &Ray, spheres: &Vec<Sphere>, depth: usize, rng: &mut Rng) -> Vec3A {
-    if let Some((obj, t)) = intersect(r, spheres) {
+fn radiance(r: &Ray, spheres: &Vec<Box<dyn Object>>, depth: usize, rng: &mut Rng) -> Vec3A {
+    if let Some(HitPoint { t, reflt, p, e, c }) = intersect(r, spheres) {
         let x = r.o + r.d * t;
-        let n = (x - obj.p).normalize();
+        let n = (x - p).normalize();
         let nl = if n.dot(r.d) < 0. { n } else { -n };
         // println!("{}, {}, {}, {:?}, {:?}", t, n, nl, r, obj);
-        let mut f = obj.c;
+        let mut f = c;
         let p = f.max_element();
         let depth = depth + 1;
         if depth > 10 {
-            return obj.e;
+            return e;
         }
         if depth > 5 {
             if rng.f32() < p {
                 f /= p;
             } else {
-                return obj.e;
+                return e;
             }
         }
 
-        match obj.refl {
+        match reflt {
             ReflT::DIFF => {
                 let r1 = 2. * PI * rng.f32();
                 let r2 = rng.f32();
@@ -118,12 +81,12 @@ fn radiance(r: &Ray, spheres: &Vec<Sphere>, depth: usize, rng: &mut Rng) -> Vec3
                 let d =
                     (u * r1.cos() * r2s + v * r1.sin() * r2s + w * (1. - r2).sqrt()).normalize();
                 let newr = Ray { o: x + 0.1 * d, d };
-                return f.mul_add(radiance(&newr, spheres, depth, rng), obj.e);
+                return f.mul_add(radiance(&newr, spheres, depth, rng), e);
             }
             ReflT::SPEC => {
                 let d = r.d - n * 2. * n.dot(r.d);
                 let newr = Ray { o: x, d };
-                return f.mul_add(radiance(&newr, spheres, depth, rng), obj.e);
+                return f.mul_add(radiance(&newr, spheres, depth, rng), e);
             }
             ReflT::REFR => {
                 let refld = r.d - n * 2. * n.dot(r.d);
@@ -135,7 +98,7 @@ fn radiance(r: &Ray, spheres: &Vec<Sphere>, depth: usize, rng: &mut Rng) -> Vec3
                 let ddn = r.d.dot(nl);
                 let cos2t = 1. - nnt * nnt * (1. - ddn * ddn);
                 if cos2t < 0. {
-                    return f.mul_add(radiance(&reflRay, spheres, depth, rng), obj.e);
+                    return f.mul_add(radiance(&reflRay, spheres, depth, rng), e);
                 }
                 let tdir = (r.d * nnt
                     - n * (if into { 1. } else { -1. }) * (ddn * nnt + cos2t.sqrt()))
@@ -161,7 +124,7 @@ fn radiance(r: &Ray, spheres: &Vec<Sphere>, depth: usize, rng: &mut Rng) -> Vec3
                         radiance(&reflRay, spheres, depth, rng) * Re
                             + radiance(&tray, spheres, depth, rng) * Tr
                     },
-                    obj.e,
+                    e,
                 );
             }
         }
@@ -172,7 +135,7 @@ fn radiance(r: &Ray, spheres: &Vec<Sphere>, depth: usize, rng: &mut Rng) -> Vec3
 
 fn main() {
     use ReflT::{DIFF, REFR, SPEC};
-    let spheres = vec![
+    let spheres: Vec<Sphere> = vec![
         Sphere::new(
             1e5,
             Vec3A::new(1e5 + 1., 40.8, 81.6),
@@ -237,10 +200,14 @@ fn main() {
             DIFF,
         ), //Lite
     ];
+    let spheres = spheres
+        .into_iter()
+        .map(|s| Box::new(s) as Box<dyn Object>)
+        .collect();
 
     let w = 1024;
     let h = 768;
-    let samps = 40;
+    let samps = 4;
     let cam = Ray {
         o: Vec3A::new(50., 52., 295.6),
         d: Vec3A::new(0., -0.042612, -1.).normalize(),
