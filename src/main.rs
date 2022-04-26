@@ -1,6 +1,8 @@
 use fastrand::Rng;
 use glam::Vec3A;
-use objects::{HitPoint, Object};
+use intersect::Intersection;
+use material::ReflT;
+use objects::Object;
 use std::{
     f32::{consts::PI, INFINITY},
     fs::File,
@@ -8,18 +10,20 @@ use std::{
 };
 
 use crate::objects::sphere::Sphere;
+mod intersect;
+mod material;
 mod objects;
 
-#[derive(Debug, Clone, Copy)]
-pub enum ReflT {
-    DIFF,
-    SPEC,
-    REFR,
-}
 #[derive(Debug)]
 pub struct Ray {
     pub o: Vec3A,
     pub d: Vec3A,
+}
+
+impl Ray {
+    pub fn at(&self, t: f32) -> Vec3A {
+        return self.o + self.d * t;
+    }
 }
 
 fn clamp(x: f32) -> f32 {
@@ -30,24 +34,28 @@ fn to_int(x: f32) -> i32 {
     return (clamp(x).powf(1. / 2.2) * 255. + 0.5) as i32;
 }
 
-fn intersect(r: &Ray, spheres: &Vec<Box<dyn Object>>) -> Option<HitPoint> {
+fn intersect(r: &Ray, spheres: &Vec<Box<dyn Object>>) -> Option<Intersection> {
     let mut t = INFINITY;
     let mut h = None;
-    for (i, sphere) in spheres.iter().enumerate() {
+    for (_, sphere) in spheres.iter().enumerate() {
         if let Some(hit) = sphere.intersect(r, 0.01, t) {
-            if hit.t < t {
-                t = hit.t;
-                h = Some(hit);
-            }
+            t = hit.t;
+            h = Some(hit);
         }
     }
     return h;
 }
 
 fn radiance(r: &Ray, spheres: &Vec<Box<dyn Object>>, depth: usize, rng: &mut Rng) -> Vec3A {
-    if let Some(HitPoint { t, reflt, p, e, c }) = intersect(r, spheres) {
-        let x = r.o + r.d * t;
-        let n = (x - p).normalize();
+    if let Some(Intersection {
+        reflt,
+        point: x,
+        e,
+        c,
+        norm: n,
+        t: _,
+    }) = intersect(r, spheres)
+    {
         let nl = if n.dot(r.d) < 0. { n } else { -n };
         // println!("{}, {}, {}, {:?}, {:?}", t, n, nl, r, obj);
         let mut f = c;
@@ -205,8 +213,8 @@ fn main() {
         .map(|s| Box::new(s) as Box<dyn Object>)
         .collect();
 
-    let w = 1024;
-    let h = 768;
+    let w = 1024 / 2;
+    let h = 768 / 2;
     let samps = 4;
     let cam = Ray {
         o: Vec3A::new(50., 52., 295.6),

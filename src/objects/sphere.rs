@@ -2,7 +2,7 @@ use glam::Vec3A;
 
 use crate::{Ray, ReflT};
 
-use super::{HitPoint, Object};
+use super::{Intersection, Object};
 #[derive(Debug)]
 pub struct Sphere {
     rad: f32,
@@ -19,7 +19,7 @@ impl Sphere {
 }
 
 impl Object for Sphere {
-    fn intersect(&self, r: &Ray, tmin: f32, tmax: f32) -> Option<HitPoint> {
+    fn intersect(&self, r: &Ray, tmin: f32, tmax: f32) -> Option<Intersection> {
         let op = self.p - r.o;
         let b = op.dot(r.d);
         let mut det = b * b - op.dot(op) + self.rad * self.rad;
@@ -30,8 +30,10 @@ impl Object for Sphere {
         }
         let t = b - det;
         if t >= tmin && t <= tmax {
-            return Some(HitPoint {
-                p: self.p,
+            let point = r.at(t);
+            return Some(Intersection {
+                point,
+                norm: (point - self.p).normalize(),
                 e: self.e,
                 reflt: self.refl,
                 c: self.c,
@@ -40,8 +42,10 @@ impl Object for Sphere {
         } else {
             let t = b + det;
             if t >= tmin && t <= tmax {
-                return Some(HitPoint {
-                    p: self.p,
+                let point = r.at(t);
+                return Some(Intersection {
+                    point,
+                    norm: (point - self.p).normalize(),
                     e: self.e,
                     reflt: self.refl,
                     c: self.c,
