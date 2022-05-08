@@ -2,17 +2,13 @@ use fastrand::Rng;
 use glam::Vec3A;
 use intersect::Intersection;
 use material::ReflT;
-use objects::Object;
-use std::{
-    f32::{consts::PI, INFINITY},
-    fs::File,
-    io::Write,
-};
+use scene::{scene_cornell_box, Scene};
+use std::{f32::consts::PI, fs::File, io::Write};
 
-use crate::objects::sphere::Sphere;
 mod intersect;
 mod material;
 mod objects;
+mod scene;
 
 #[derive(Debug)]
 pub struct Ray {
@@ -26,27 +22,11 @@ impl Ray {
     }
 }
 
-fn clamp(x: f32) -> f32 {
-    x.clamp(0., 1.)
-}
-
 fn to_int(x: f32) -> i32 {
-    return (clamp(x).powf(1. / 2.2) * 255. + 0.5) as i32;
+    return (x.clamp(0., 1.).powf(1. / 2.2) * 255. + 0.5) as i32;
 }
 
-fn intersect(r: &Ray, spheres: &Vec<Box<dyn Object>>) -> Option<Intersection> {
-    let mut t = INFINITY;
-    let mut h = None;
-    for (_, sphere) in spheres.iter().enumerate() {
-        if let Some(hit) = sphere.intersect(r, 0.01, t) {
-            t = hit.t;
-            h = Some(hit);
-        }
-    }
-    return h;
-}
-
-fn radiance(r: &Ray, spheres: &Vec<Box<dyn Object>>, depth: usize, rng: &mut Rng) -> Vec3A {
+fn radiance(r: &Ray, scene: &Scene, depth: usize, rng: &mut Rng) -> Vec3A {
     if let Some(Intersection {
         reflt,
         point: x,
@@ -54,10 +34,9 @@ fn radiance(r: &Ray, spheres: &Vec<Box<dyn Object>>, depth: usize, rng: &mut Rng
         c,
         norm: n,
         t: _,
-    }) = intersect(r, spheres)
+    }) = scene.intersect(r)
     {
         let nl = if n.dot(r.d) < 0. { n } else { -n };
-        // println!("{}, {}, {}, {:?}, {:?}", t, n, nl, r, obj);
         let mut f = c;
         let p = f.max_element();
         let depth = depth + 1;
@@ -89,12 +68,12 @@ fn radiance(r: &Ray, spheres: &Vec<Box<dyn Object>>, depth: usize, rng: &mut Rng
                 let d =
                     (u * r1.cos() * r2s + v * r1.sin() * r2s + w * (1. - r2).sqrt()).normalize();
                 let newr = Ray { o: x + 0.1 * d, d };
-                return f.mul_add(radiance(&newr, spheres, depth, rng), e);
+                return f.mul_add(radiance(&newr, scene, depth, rng), e);
             }
             ReflT::SPEC => {
                 let d = r.d - n * 2. * n.dot(r.d);
                 let newr = Ray { o: x, d };
-                return f.mul_add(radiance(&newr, spheres, depth, rng), e);
+                return f.mul_add(radiance(&newr, scene, depth, rng), e);
             }
             ReflT::REFR => {
                 let refld = r.d - n * 2. * n.dot(r.d);
@@ -106,7 +85,7 @@ fn radiance(r: &Ray, spheres: &Vec<Box<dyn Object>>, depth: usize, rng: &mut Rng
                 let ddn = r.d.dot(nl);
                 let cos2t = 1. - nnt * nnt * (1. - ddn * ddn);
                 if cos2t < 0. {
-                    return f.mul_add(radiance(&reflRay, spheres, depth, rng), e);
+                    return f.mul_add(radiance(&reflRay, scene, depth, rng), e);
                 }
                 let tdir = (r.d * nnt
                     - n * (if into { 1. } else { -1. }) * (ddn * nnt + cos2t.sqrt()))
@@ -124,94 +103,24 @@ fn radiance(r: &Ray, spheres: &Vec<Box<dyn Object>>, depth: usize, rng: &mut Rng
                 return f.mul_add(
                     if depth > 2 {
                         if rng.f32() < P {
-                            radiance(&reflRay, spheres, depth, rng) * RP
+                            radiance(&reflRay, scene, depth, rng) * RP
                         } else {
-                            radiance(&tray, spheres, depth, rng) * TP
+                            radiance(&tray, scene, depth, rng) * TP
                         }
                     } else {
-                        radiance(&reflRay, spheres, depth, rng) * Re
-                            + radiance(&tray, spheres, depth, rng) * Tr
+                        radiance(&reflRay, scene, depth, rng) * Re
+                            + radiance(&tray, scene, depth, rng) * Tr
                     },
                     e,
                 );
             }
         }
-    } else {
-        return Vec3A::ZERO;
     }
+    Vec3A::ZERO
 }
 
 fn main() {
-    use ReflT::{DIFF, REFR, SPEC};
-    let spheres: Vec<Sphere> = vec![
-        Sphere::new(
-            1e5,
-            Vec3A::new(1e5 + 1., 40.8, 81.6),
-            Vec3A::ZERO,
-            Vec3A::new(0.75, 0.25, 0.25),
-            DIFF,
-        ), //Left
-        Sphere::new(
-            1e5,
-            Vec3A::new(-1e5 + 99., 40.8, 81.6),
-            Vec3A::ZERO,
-            Vec3A::new(0.25, 0.25, 0.75),
-            DIFF,
-        ), //Rght
-        Sphere::new(
-            1e5,
-            Vec3A::new(50., 40.8, 1e5),
-            Vec3A::ZERO,
-            Vec3A::new(0.75, 0.75, 0.75),
-            DIFF,
-        ), //Back
-        Sphere::new(
-            1e5,
-            Vec3A::new(50., 40.8, -1e5 + 170.),
-            Vec3A::ZERO,
-            Vec3A::ZERO,
-            DIFF,
-        ), //Frnt
-        Sphere::new(
-            1e5,
-            Vec3A::new(50., 1e5, 81.6),
-            Vec3A::ZERO,
-            Vec3A::new(0.75, 0.75, 0.75),
-            DIFF,
-        ), //Botm
-        Sphere::new(
-            1e5,
-            Vec3A::new(50., -1e5 + 81.6, 81.6),
-            Vec3A::ZERO,
-            Vec3A::new(0.75, 0.75, 0.75),
-            DIFF,
-        ), //Top
-        Sphere::new(
-            16.5,
-            Vec3A::new(27., 16.5, 47.),
-            Vec3A::ZERO,
-            Vec3A::ONE * 0.999,
-            SPEC,
-        ), //Mirr
-        Sphere::new(
-            16.5,
-            Vec3A::new(73., 16.5, 78.),
-            Vec3A::ZERO,
-            Vec3A::ONE * 0.999,
-            REFR,
-        ), //Glas
-        Sphere::new(
-            600.,
-            Vec3A::new(50., 681.6 - 0.27, 81.6),
-            Vec3A::new(12., 12., 12.),
-            Vec3A::ZERO,
-            DIFF,
-        ), //Lite
-    ];
-    let spheres = spheres
-        .into_iter()
-        .map(|s| Box::new(s) as Box<dyn Object>)
-        .collect();
+    let scene = scene_cornell_box();
 
     let w = 1024 / 2;
     let h = 768 / 2;
@@ -254,7 +163,7 @@ fn main() {
                             o: cam.o + d * 140.,
                             d: d.normalize(),
                         };
-                        r += radiance(&ray, &spheres, 0, &mut rng) / samps as f32;
+                        r += radiance(&ray, &scene, 0, &mut rng) / samps as f32;
                     }
                     let i = (h - y - 1) * w + x;
                     c[i] = c[i] + r.clamp(Vec3A::ZERO, Vec3A::ONE) / 4.;
