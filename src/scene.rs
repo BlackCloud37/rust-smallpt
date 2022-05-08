@@ -3,9 +3,9 @@ use std::f32::INFINITY;
 use glam::Vec3A;
 
 use crate::{
+    camera::Ray,
     intersect::Intersection,
     objects::{sphere::Sphere, Object},
-    Ray,
 };
 
 pub struct Scene {

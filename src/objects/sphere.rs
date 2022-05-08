@@ -1,6 +1,6 @@
 use glam::Vec3A;
 
-use crate::{Ray, ReflT};
+use crate::{camera::Ray, ReflT};
 
 use super::{Intersection, Object};
 #[derive(Debug)]

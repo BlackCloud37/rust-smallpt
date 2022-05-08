@@ -1,4 +1,4 @@
-use crate::{intersect::Intersection, Ray};
+use crate::{camera::Ray, intersect::Intersection};
 
 pub mod sphere;
 
